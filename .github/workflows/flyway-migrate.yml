@@ -78,20 +78,24 @@ jobs:
           echo "Netty check (must include netty-common):"
           ls -la lib | grep -i "netty-common" || (echo "ERROR: netty-common jar not found in lib/" && exit 1)
 
-          # Copy ONLY what Flyway needs for Cassandra driver, but exclude jackson-* to prevent NoSuchMethodError
-          find lib -maxdepth 1 -type f -name "*.jar" \
-            ! -name "jackson-*.jar" \
-            -print -exec cp -v {} jdbc/ \;
+            # Copy ONLY what Flyway needs for Cassandra driver, but exclude Jackson + Flyway-internal style jars
+            find lib -maxdepth 1 -type f -name "*.jar" \
+              ! -name "jackson-*.jar" \
+              ! -name "third-party-jackson-*.jar" \
+              ! -name "slf4j-*.jar" \
+              ! -name "logback-*.jar" \
+              -print -exec cp -v {} jdbc/ \;
 
-          echo "jdbc/ jars (first 80):"
-          ls -la jdbc | head -n 80
+            echo "jdbc/ jars (first 80):"
+            ls -la jdbc | head -n 80
 
-          echo "Ensure jdbc/ does not include jackson-*:"
-          if ls jdbc | grep -qi "jackson-"; then
-            echo "ERROR: jackson jar found in jdbc/. Excluding failed."
-            ls -la jdbc | grep -i jackson || true
-            exit 1
-          fi
+            echo "Ensure jdbc/ does not include jackson or third-party-jackson:"
+            if ls jdbc | grep -Eqi "(^jackson-|^third-party-jackson-)"; then
+              echo "ERROR: jackson jar found in jdbc/. Excluding failed."
+              ls -la jdbc | grep -Ei "(jackson|third-party-jackson)" || true
+              exit 1
+            fi
+
 
       # - name: Flyway info (pre-check)
       #   shell: bash
