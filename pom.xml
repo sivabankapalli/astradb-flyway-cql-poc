@@ -1,0 +1,49 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>poc</groupId>
+  <artifactId>astradb-flyway-cql-poc</artifactId>
+  <version>1.0.0</version>
+
+  <properties>
+    <flyway.version>10.17.0</flyway.version>
+    <cassandra.jdbc.wrapper.version>4.16.1</cassandra.jdbc.wrapper.version>
+  </properties>
+
+  <dependencies>
+    <!-- Cassandra JDBC wrapper (brings DataStax Java driver + Netty deps transitively) -->
+    <dependency>
+      <groupId>com.ing.data</groupId>
+      <artifactId>cassandra-jdbc-wrapper</artifactId>
+      <version>${cassandra.jdbc.wrapper.version}</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.flywaydb</groupId>
+        <artifactId>flyway-maven-plugin</artifactId>
+        <version>${flyway.version}</version>
+        <configuration>
+          <!-- CQL migrations -->
+          <sqlMigrationSuffixes>
+            <sqlMigrationSuffix>.cql</sqlMigrationSuffix>
+          </sqlMigrationSuffixes>
+
+          <!-- Where your scripts are -->
+          <locations>
+            <location>filesystem:flyway/sql</location>
+          </locations>
+
+          <!-- IMPORTANT: Cassandra JDBC wrapper driver -->
+          <driver>com.ing.data.cassandra.jdbc.CassandraDriver</driver>
+
+          <!-- Let workflow provide url/user/password via -D... -->
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

@@ -1,4 +1,4 @@
-﻿name: Flyway - AstraDB CQL Migrations (PoC)
+﻿name: Flyway - AstraDB CQL Migrations (PoC) [Maven]
 
 on:
   workflow_dispatch:
@@ -6,18 +6,17 @@ on:
 jobs:
   migrate:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Java (required for Flyway + JDBC)
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Create Secure Connect Bundle from base64 secret
+      - name: Create Secure Connect Bundle
         shell: bash
         env:
           ASTRA_SCB_BASE64: ${{ secrets.ASTRA_SCB_BASE64 }}
@@ -27,106 +26,24 @@ jobs:
           echo "$ASTRA_SCB_BASE64" | base64 -d > .astra/secure-connect.zip
           ls -la .astra/secure-connect.zip
 
-      - name: Download Flyway CLI (robust install + verify)
-        shell: bash
-        run: |
-          set -euo pipefail
-          FLYWAY_VER="10.17.0"
-          curl -sSL "https://repo1.maven.org/maven2/org/flywaydb/flyway-commandline/${FLYWAY_VER}/flyway-commandline-${FLYWAY_VER}-linux-x64.tar.gz" -o flyway.tgz
-          tar -xzf flyway.tgz
-
-          REL_FLYWAY_HOME="$(find . -maxdepth 2 -type f -name flyway -print | head -n 1 | xargs dirname)"
-          if [ -z "${REL_FLYWAY_HOME:-}" ]; then echo "ERROR: Could not locate Flyway binary after extract" && exit 1; fi
-
-          chmod +x "$REL_FLYWAY_HOME/flyway"
-
-          # Add to PATH for later steps
-          echo "$(pwd)/$REL_FLYWAY_HOME" >> "$GITHUB_PATH"
-
-          # Verify immediately using absolute path
-          "$(pwd)/$REL_FLYWAY_HOME/flyway" -v
-
-      - name: Download Cassandra JDBC wrapper deps into jdbc/ (keep Netty, remove Jackson conflicts)
-        shell: bash
-        run: |
-            set -euo pipefail
-            mkdir -p lib jdbc
-
-            cat > pom.xml << 'EOF'
-            <project xmlns="http://maven.apache.org/POM/4.0.0"
-                     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                     xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-              <modelVersion>4.0.0</modelVersion>
-              <groupId>poc</groupId>
-              <artifactId>astra-flyway</artifactId>
-              <version>1.0.0</version>
-              <dependencies>
-                <dependency>
-                  <groupId>com.ing.data</groupId>
-                  <artifactId>cassandra-jdbc-wrapper</artifactId>
-                  <version>4.16.1</version>
-                </dependency>
-              </dependencies>
-            </project>
-            EOF
-
-            mvn -q -DskipTests dependency:copy-dependencies -DoutputDirectory=lib
-
-            echo "Downloaded jars to lib/ (first 80):"
-            ls -la lib | head -n 80
-
-            # Copy everything first
-            cp -v lib/*.jar jdbc/ || true
-
-            # Remove jars that conflict with Flyway's internal Jackson
-            rm -f jdbc/jackson-*.jar
-            rm -f jdbc/third-party-jackson-*.jar
-
-            # Optional: avoid logging clashes
-            rm -f jdbc/slf4j-*.jar
-            rm -f jdbc/logback-*.jar
-
-            echo "jdbc/ jars after removals (first 120):"
-            ls -la jdbc | head -n 120
-
-            # Must-have: Netty
-            ls -la jdbc | grep -i "netty-common" || (echo "ERROR: netty-common missing from jdbc/; cannot proceed" && exit 1)
-
-            # Must-not-have: Jackson
-            if ls jdbc | grep -Eqi "(^jackson-|^third-party-jackson-)"; then
-              echo "ERROR: Jackson jars still present in jdbc/. Remove failed."
-              ls -la jdbc | grep -Ei "(jackson|third-party-jackson)" || true
-              exit 1
-            fi
-
-
-
-      - name: Flyway info (pre-check)
-        shell: bash
-        env:
-          ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
-          ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
-        run: |
-          set -euo pipefail
-          flyway \
-            -configFiles=flyway/conf/flyway.conf \
-            -jarDirs="jdbc" \
-            -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
-            -schemas="${ASTRA_DB_KEYSPACE}" \
-            -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
-            info
-
-      # - name: Flyway migrate
+      # - name: Flyway info (Maven)
       #   shell: bash
       #   env:
       #     ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
       #     ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
       #   run: |
       #     set -euo pipefail
-      #     flyway \
-      #       -configFiles=flyway/conf/flyway.conf \
-      #       -jarDirs="jdbc" \
-      #       -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
-      #       -schemas="${ASTRA_DB_KEYSPACE}" \
-      #       -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
-      #       migrate
+      #     mvn -q -DskipTests flyway:info \
+      #       -Dflyway.url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
+      #       -Dflyway.schemas="${ASTRA_DB_KEYSPACE}"
+
+      # - name: Flyway migrate (Maven)
+      #   shell: bash
+      #   env:
+      #     ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
+      #     ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
+      #   run: |
+      #     set -euo pipefail
+      #     mvn -q -DskipTests flyway:migrate \
+      #       -Dflyway.url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
+      #       -Dflyway.schemas="${ASTRA_DB_KEYSPACE}"
