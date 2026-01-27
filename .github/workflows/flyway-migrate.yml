@@ -1,4 +1,4 @@
-name: Flyway - AstraDB CQL Migrations
+name: Flyway - AstraDB CQL Migrations (PoC)
 
 on:
   workflow_dispatch:
@@ -17,32 +17,66 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Prepare Secure Connect Bundle
+      - name: Create Secure Connect Bundle from base64 secret
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p .astra
           echo "${{ secrets.ASTRA_SCB_BASE64 }}" | base64 -d > .astra/secure-connect.zip
           ls -la .astra
 
-      - name: Download Flyway CLI
+      - name: Download Flyway CLI (robust install + verify)
+        shell: bash
         run: |
+          set -euo pipefail
+
           FLYWAY_VER="10.17.0"
           curl -sSL "https://repo1.maven.org/maven2/org/flywaydb/flyway-commandline/${FLYWAY_VER}/flyway-commandline-${FLYWAY_VER}-linux-x64.tar.gz" -o flyway.tgz
-          tar -xzf flyway.tgz
-          echo "$(pwd)/flyway-${FLYWAY_VER}" >> $GITHUB_PATH
-          flyway -v
 
-      - name: Download Cassandra JDBC wrapper
+          tar -xzf flyway.tgz
+
+          # Find actual Flyway home (directory containing ./flyway)
+          FLYWAY_HOME="$(find . -maxdepth 2 -type f -name flyway -print | head -n 1 | xargs dirname)"
+          echo "Detected FLYWAY_HOME=$FLYWAY_HOME"
+
+          chmod +x "$FLYWAY_HOME/flyway"
+
+          # Add to PATH for later steps
+          echo "$(pwd)/$FLYWAY_HOME" >> "$GITHUB_PATH"
+
+          # Verify immediately (absolute path avoids PATH timing issues)
+          "$FLYWAY_HOME/flyway" -v
+
+      - name: Download Cassandra JDBC Wrapper
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p lib
           WRAPPER_VER="4.16.0"
-          curl -sSL "https://repo1.maven.org/maven2/com/ing/data/cassandra-jdbc-wrapper/${WRAPPER_VER}/cassandra-jdbc-wrapper-${WRAPPER_VER}.jar" -o "lib/cassandra-jdbc-wrapper-${WRAPPER_VER}.jar"
+          curl -sSL "https://repo1.maven.org/maven2/com/ing/data/cassandra-jdbc-wrapper/${WRAPPER_VER}/cassandra-jdbc-wrapper-${WRAPPER_VER}.jar" \
+            -o "lib/cassandra-jdbc-wrapper-${WRAPPER_VER}.jar"
           ls -la lib
 
-      - name: Flyway migrate
+      - name: Flyway info (pre-check)
+        shell: bash
         env:
           ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
           ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
         run: |
+          set -euo pipefail
+          flyway \
+            -configFiles=flyway/conf/flyway.conf \
+            -jarDirs="lib" \
+            -url="jdbc:cassandra:dbaas:///${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
+            info
+
+      - name: Flyway migrate
+        shell: bash
+        env:
+          ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
+          ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
+        run: |
+          set -euo pipefail
           flyway \
             -configFiles=flyway/conf/flyway.conf \
             -jarDirs="lib" \
