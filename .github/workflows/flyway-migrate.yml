@@ -1,0 +1,50 @@
+name: Flyway - AstraDB CQL Migrations
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java (required for Flyway + JDBC)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Prepare Secure Connect Bundle
+        run: |
+          mkdir -p .astra
+          echo "${{ secrets.ASTRA_SCB_BASE64 }}" | base64 -d > .astra/secure-connect.zip
+          ls -la .astra
+
+      - name: Download Flyway CLI
+        run: |
+          FLYWAY_VER="10.17.0"
+          curl -sSL "https://repo1.maven.org/maven2/org/flywaydb/flyway-commandline/${FLYWAY_VER}/flyway-commandline-${FLYWAY_VER}-linux-x64.tar.gz" -o flyway.tgz
+          tar -xzf flyway.tgz
+          echo "$(pwd)/flyway-${FLYWAY_VER}" >> $GITHUB_PATH
+          flyway -v
+
+      - name: Download Cassandra JDBC wrapper
+        run: |
+          mkdir -p lib
+          WRAPPER_VER="4.16.0"
+          curl -sSL "https://repo1.maven.org/maven2/com/ing/data/cassandra-jdbc-wrapper/${WRAPPER_VER}/cassandra-jdbc-wrapper-${WRAPPER_VER}.jar" -o "lib/cassandra-jdbc-wrapper-${WRAPPER_VER}.jar"
+          ls -la lib
+
+      - name: Flyway migrate
+        env:
+          ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
+          ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
+        run: |
+          flyway \
+            -configFiles=flyway/conf/flyway.conf \
+            -jarDirs="lib" \
+            -url="jdbc:cassandra:dbaas:///${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
+            migrate

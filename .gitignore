@@ -1,0 +1,59 @@
+################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+.vs
+# Build artifacts
+bin/
+obj/
+
+
+# =====================
+# AstraDB / Security
+# =====================
+.astra/
+secure-connect-*.zip
+*.pem
+*.key
+
+# =====================
+# Tooling (local)
+# =====================
+.tools/
+lib/
+flyway-*/
+
+# =====================
+# Flyway metadata (optional, but safer)
+flyway.log
+
+# =====================
+# OS files
+# =====================
+.DS_Store
+Thumbs.db
+
+# =====================
+# IDE / Editor
+# =====================
+.vscode/
+.idea/
+*.swp
+
+# =====================
+# Java / Maven
+# =====================
+target/
+*.jar
+*.class
+
+# =====================
+# Logs
+# =====================
+*.log
+
+# =====================
+# Environment files
+# =====================
+.env
+.env.*
