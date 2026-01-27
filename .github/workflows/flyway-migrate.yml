@@ -17,21 +17,6 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Verify Astra secrets (safe check)
-        shell: bash
-        env:
-          ASTRA_SCB_BASE64: ${{ secrets.ASTRA_SCB_BASE64 }}
-          ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
-          ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
-        run: |
-          set -euo pipefail
-          if [ -z "${ASTRA_SCB_BASE64:-}" ]; then echo "ERROR: ASTRA_SCB_BASE64 is empty" && exit 1; fi
-          if [ -z "${ASTRA_DB_TOKEN:-}" ]; then echo "ERROR: ASTRA_DB_TOKEN is empty" && exit 1; fi
-          if [ -z "${ASTRA_DB_KEYSPACE:-}" ]; then echo "ERROR: ASTRA_DB_KEYSPACE is empty" && exit 1; fi
-          echo "ASTRA_SCB_BASE64 length: $(echo -n "$ASTRA_SCB_BASE64" | wc -c) bytes"
-          echo "ASTRA_DB_TOKEN length: $(echo -n "$ASTRA_DB_TOKEN" | wc -c) characters"
-          echo "ASTRA_DB_KEYSPACE: $ASTRA_DB_KEYSPACE"
-
       - name: Create Secure Connect Bundle from base64 secret
         shell: bash
         env:
@@ -41,7 +26,6 @@ jobs:
           mkdir -p .astra
           echo "$ASTRA_SCB_BASE64" | base64 -d > .astra/secure-connect.zip
           ls -la .astra/secure-connect.zip
-          sha256sum .astra/secure-connect.zip | awk '{print "secure-connect.zip sha256: "$1}'
 
       - name: Download Flyway CLI (robust install + verify)
         shell: bash
@@ -59,14 +43,14 @@ jobs:
           # Add to PATH for later steps
           echo "$(pwd)/$REL_FLYWAY_HOME" >> "$GITHUB_PATH"
 
-          # Verify immediately using absolute path (PATH doesn't update until next step)
+          # Verify immediately using absolute path
           "$(pwd)/$REL_FLYWAY_HOME/flyway" -v
 
-      - name: Download Cassandra JDBC wrapper + dependencies (classpath)
+      - name: Download Cassandra JDBC wrapper deps into jdbc/ (exclude jackson to avoid conflicts)
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p lib
+          mkdir -p lib jdbc
 
           cat > pom.xml << 'EOF'
           <project xmlns="http://maven.apache.org/POM/4.0.0"
@@ -94,20 +78,35 @@ jobs:
           echo "Netty check (must include netty-common):"
           ls -la lib | grep -i "netty-common" || (echo "ERROR: netty-common jar not found in lib/" && exit 1)
 
-      - name: Flyway info (pre-check)
-        shell: bash
-        env:
-          ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
-          ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
-        run: |
-          set -euo pipefail
-          flyway \
-            -configFiles=flyway/conf/flyway.conf \
-            -classpath="lib/*" \
-            -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
-            -schemas="${ASTRA_DB_KEYSPACE}" \
-            -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
-            info
+          # Copy ONLY what Flyway needs for Cassandra driver, but exclude jackson-* to prevent NoSuchMethodError
+          find lib -maxdepth 1 -type f -name "*.jar" \
+            ! -name "jackson-*.jar" \
+            -print -exec cp -v {} jdbc/ \;
+
+          echo "jdbc/ jars (first 80):"
+          ls -la jdbc | head -n 80
+
+          echo "Ensure jdbc/ does not include jackson-*:"
+          if ls jdbc | grep -qi "jackson-"; then
+            echo "ERROR: jackson jar found in jdbc/. Excluding failed."
+            ls -la jdbc | grep -i jackson || true
+            exit 1
+          fi
+
+      # - name: Flyway info (pre-check)
+      #   shell: bash
+      #   env:
+      #     ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
+      #     ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
+      #   run: |
+      #     set -euo pipefail
+      #     flyway \
+      #       -configFiles=flyway/conf/flyway.conf \
+      #       -jarDirs="jdbc" \
+      #       -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
+      #       -schemas="${ASTRA_DB_KEYSPACE}" \
+      #       -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
+      #       info
 
       # - name: Flyway migrate
       #   shell: bash
@@ -118,7 +117,7 @@ jobs:
       #     set -euo pipefail
       #     flyway \
       #       -configFiles=flyway/conf/flyway.conf \
-      #       -classpath="lib/*" \
+      #       -jarDirs="jdbc" \
       #       -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
       #       -schemas="${ASTRA_DB_KEYSPACE}" \
       #       -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
