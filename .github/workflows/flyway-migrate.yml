@@ -1,4 +1,4 @@
-name: Flyway - AstraDB CQL Migrations (PoC)
+﻿name: Flyway - AstraDB CQL Migrations (PoC)
 
 on:
   workflow_dispatch:
@@ -32,59 +32,73 @@ jobs:
 
           FLYWAY_VER="10.17.0"
           curl -sSL "https://repo1.maven.org/maven2/org/flywaydb/flyway-commandline/${FLYWAY_VER}/flyway-commandline-${FLYWAY_VER}-linux-x64.tar.gz" -o flyway.tgz
-
           tar -xzf flyway.tgz
 
-          # Find actual Flyway home (directory containing ./flyway)
           FLYWAY_HOME="$(find . -maxdepth 2 -type f -name flyway -print | head -n 1 | xargs dirname)"
           echo "Detected FLYWAY_HOME=$FLYWAY_HOME"
 
           chmod +x "$FLYWAY_HOME/flyway"
-
-          # Add to PATH for later steps
           echo "$(pwd)/$FLYWAY_HOME" >> "$GITHUB_PATH"
-
-          # Verify immediately (absolute path avoids PATH timing issues)
           "$FLYWAY_HOME/flyway" -v
 
-      - name: Download Cassandra JDBC Wrapper
+      - name: Download Cassandra JDBC wrapper (with dependencies)
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p lib
-          WRAPPER_VER="4.16.0"
-          curl -sSL "https://repo1.maven.org/maven2/com/ing/data/cassandra-jdbc-wrapper/${WRAPPER_VER}/cassandra-jdbc-wrapper-${WRAPPER_VER}.jar" \
-            -o "lib/cassandra-jdbc-wrapper-${WRAPPER_VER}.jar"
-          ls -la lib
+
+          cat > pom.xml << 'EOF'
+          <project xmlns="http://maven.apache.org/POM/4.0.0"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>poc</groupId>
+            <artifactId>astra-flyway</artifactId>
+            <version>1.0.0</version>
+            <dependencies>
+              <dependency>
+                <groupId>com.ing.data</groupId>
+                <artifactId>cassandra-jdbc-wrapper</artifactId>
+                <version>4.16.1</version>
+              </dependency>
+            </dependencies>
+          </project>
+          EOF
+
+          mvn -q -DskipTests dependency:copy-dependencies -DoutputDirectory=lib
+
+          echo "Downloaded jars (showing first 80):"
+          ls -la lib | head -n 80
+
+          echo "Netty presence check:"
+          ls -la lib | grep -i netty || true
 
       - name: Flyway info (pre-check)
         shell: bash
         env:
-            ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
-            ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
+          ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
+          ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
         run: |
-            set -euo pipefail
-            flyway \
-              -configFiles=flyway/conf/flyway.conf \
-              -jarDirs="lib" \
-              -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
-              -schemas="${ASTRA_DB_KEYSPACE}" \
-              -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
-              info
-
+          set -euo pipefail
+          flyway \
+            -configFiles=flyway/conf/flyway.conf \
+            -jarDirs="lib" \
+            -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
+            -schemas="${ASTRA_DB_KEYSPACE}" \
+            -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
+            info
 
       - name: Flyway migrate
         shell: bash
         env:
-            ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
-            ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
+          ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
+          ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
         run: |
-            set -euo pipefail
-            flyway \
-              -configFiles=flyway/conf/flyway.conf \
-              -jarDirs="lib" \
-              -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
-              -schemas="${ASTRA_DB_KEYSPACE}" \
-              -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
-              migrate
-
+          set -euo pipefail
+          flyway \
+            -configFiles=flyway/conf/flyway.conf \
+            -jarDirs="lib" \
+            -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
+            -schemas="${ASTRA_DB_KEYSPACE}" \
+            -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
+            migrate
