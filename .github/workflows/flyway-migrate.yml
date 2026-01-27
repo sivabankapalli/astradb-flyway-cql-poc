@@ -68,76 +68,88 @@ jobs:
           # Verify immediately (absolute path avoids PATH timing issues)
           "$(pwd)/$REL_FLYWAY_HOME/flyway" -v
 
-      - name: Download Cassandra JDBC wrapper (with dependencies) into Flyway drivers/
+      - name: Download Cassandra JDBC wrapper (with dependencies) into Flyway drivers/ (no Jackson conflicts)
         shell: bash
         run: |
-          set -euo pipefail
+            set -euo pipefail
 
-          if [ -z "${FLYWAY_HOME:-}" ]; then echo "ERROR: FLYWAY_HOME not set" && exit 1; fi
-          echo "Using FLYWAY_HOME=$FLYWAY_HOME"
+            if [ -z "${FLYWAY_HOME:-}" ]; then echo "ERROR: FLYWAY_HOME not set" && exit 1; fi
+            echo "Using FLYWAY_HOME=$FLYWAY_HOME"
 
-          mkdir -p lib
-          mkdir -p "$FLYWAY_HOME/drivers"
+            mkdir -p lib
+            mkdir -p "$FLYWAY_HOME/drivers"
 
-          # Use Maven to pull the wrapper + ALL transitive deps (Netty, DataStax driver, etc.)
-          cat > pom.xml << 'EOF'
-          <project xmlns="http://maven.apache.org/POM/4.0.0"
-                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-            <modelVersion>4.0.0</modelVersion>
-            <groupId>poc</groupId>
-            <artifactId>astra-flyway</artifactId>
-            <version>1.0.0</version>
-            <dependencies>
-              <dependency>
-                <groupId>com.ing.data</groupId>
-                <artifactId>cassandra-jdbc-wrapper</artifactId>
-                <version>4.16.1</version>
-              </dependency>
-            </dependencies>
-          </project>
-          EOF
+            # Pull wrapper + all dependencies
+            cat > pom.xml << 'EOF'
+            <project xmlns="http://maven.apache.org/POM/4.0.0"
+                     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                     xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>poc</groupId>
+              <artifactId>astra-flyway</artifactId>
+              <version>1.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>com.ing.data</groupId>
+                  <artifactId>cassandra-jdbc-wrapper</artifactId>
+                  <version>4.16.1</version>
+                </dependency>
+              </dependencies>
+            </project>
+            EOF
 
-          mvn -q -DskipTests dependency:copy-dependencies -DoutputDirectory=lib
+            mvn -q -DskipTests dependency:copy-dependencies -DoutputDirectory=lib
 
-          echo "Downloaded jars (first 80):"
-          ls -la lib | head -n 80
+            echo "Downloaded jars (first 80):"
+            ls -la lib | head -n 80
 
-          echo "Netty check (FastThreadLocalThread is in netty-common):"
-          ls -la lib | grep -i "netty-common" || (echo "ERROR: netty-common jar not found in lib/" && exit 1)
+            echo "Netty check:"
+            ls -la lib | grep -i "netty-common" || (echo "ERROR: netty-common jar not found in lib/" && exit 1)
 
-          # Copy ALL jars into Flyway's drivers folder (Flyway reliably loads JDBC drivers from here)
-          cp -v lib/*.jar "$FLYWAY_HOME/drivers/"
+            # IMPORTANT:
+            # Flyway bundles Jackson internally. If we add another jackson-* jar, Flyway can break with NoSuchMethodError.
+            # So: copy everything EXCEPT jackson-* into Flyway's drivers folder.
+            echo "Copying jars to Flyway drivers/ excluding jackson-* to prevent version conflicts..."
+            find lib -maxdepth 1 -type f -name "*.jar" \
+              ! -name "jackson-*.jar" \
+              -print -exec cp -v {} "$FLYWAY_HOME/drivers/" \;
 
-          echo "Flyway drivers/ (first 80):"
-          ls -la "$FLYWAY_HOME/drivers/" | head -n 80
+            echo "Flyway drivers/ (first 80):"
+            ls -la "$FLYWAY_HOME/drivers/" | head -n 80
 
-      - name: Flyway info (pre-check)
-        shell: bash
-        env:
-          ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
-          ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
-        run: |
-          set -euo pipefail
+            echo "Sanity check: ensure no jackson jars are present in drivers/"
+            if ls "$FLYWAY_HOME/drivers/" | grep -qi "jackson-"; then
+              echo "ERROR: jackson-* jar found in drivers/. Remove it to avoid conflicts."
+              ls -la "$FLYWAY_HOME/drivers/" | grep -i jackson || true
+              exit 1
+            fi
 
-          flyway \
-            -configFiles=flyway/conf/flyway.conf \
-            -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
-            -schemas="${ASTRA_DB_KEYSPACE}" \
-            -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
-            info
+      # - name: Flyway info (pre-check)
+      #   shell: bash
+      #   env:
+      #     ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
+      #     ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
+      #   run: |
+      #     set -euo pipefail
 
-      - name: Flyway migrate
-        shell: bash
-        env:
-          ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
-          ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
-        run: |
-          set -euo pipefail
+      #     flyway \
+      #       -configFiles=flyway/conf/flyway.conf \
+      #       -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
+      #       -schemas="${ASTRA_DB_KEYSPACE}" \
+      #       -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
+      #       info
 
-          flyway \
-            -configFiles=flyway/conf/flyway.conf \
-            -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
-            -schemas="${ASTRA_DB_KEYSPACE}" \
-            -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
-            migrate
+      # - name: Flyway migrate
+      #   shell: bash
+      #   env:
+      #     ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
+      #     ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
+      #   run: |
+      #     set -euo pipefail
+
+      #     flyway \
+      #       -configFiles=flyway/conf/flyway.conf \
+      #       -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
+      #       -schemas="${ASTRA_DB_KEYSPACE}" \
+      #       -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
+      #       migrate
