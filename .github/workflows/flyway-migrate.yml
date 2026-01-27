@@ -25,11 +25,9 @@ jobs:
           ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
         run: |
           set -euo pipefail
-
           if [ -z "${ASTRA_SCB_BASE64:-}" ]; then echo "ERROR: ASTRA_SCB_BASE64 is empty" && exit 1; fi
           if [ -z "${ASTRA_DB_TOKEN:-}" ]; then echo "ERROR: ASTRA_DB_TOKEN is empty" && exit 1; fi
           if [ -z "${ASTRA_DB_KEYSPACE:-}" ]; then echo "ERROR: ASTRA_DB_KEYSPACE is empty" && exit 1; fi
-
           echo "ASTRA_SCB_BASE64 length: $(echo -n "$ASTRA_SCB_BASE64" | wc -c) bytes"
           echo "ASTRA_DB_TOKEN length: $(echo -n "$ASTRA_DB_TOKEN" | wc -c) characters"
           echo "ASTRA_DB_KEYSPACE: $ASTRA_DB_KEYSPACE"
@@ -42,91 +40,57 @@ jobs:
           set -euo pipefail
           mkdir -p .astra
           echo "$ASTRA_SCB_BASE64" | base64 -d > .astra/secure-connect.zip
-          echo "Secure bundle file info:" && ls -la .astra/secure-connect.zip
+          ls -la .astra/secure-connect.zip
           sha256sum .astra/secure-connect.zip | awk '{print "secure-connect.zip sha256: "$1}'
 
-      - name: Download Flyway CLI (robust install + verify)
+      - name: Download Flyway CLI
         shell: bash
         run: |
           set -euo pipefail
-
           FLYWAY_VER="10.17.0"
           curl -sSL "https://repo1.maven.org/maven2/org/flywaydb/flyway-commandline/${FLYWAY_VER}/flyway-commandline-${FLYWAY_VER}-linux-x64.tar.gz" -o flyway.tgz
           tar -xzf flyway.tgz
 
-          # Find actual Flyway home (directory containing ./flyway)
           REL_FLYWAY_HOME="$(find . -maxdepth 2 -type f -name flyway -print | head -n 1 | xargs dirname)"
           if [ -z "${REL_FLYWAY_HOME:-}" ]; then echo "ERROR: Could not locate Flyway binary after extract" && exit 1; fi
 
-          echo "Detected Flyway home: $REL_FLYWAY_HOME"
           chmod +x "$REL_FLYWAY_HOME/flyway"
-
-          # Export Flyway home for later steps + add to PATH
-          echo "FLYWAY_HOME=$(pwd)/$REL_FLYWAY_HOME" >> "$GITHUB_ENV"
           echo "$(pwd)/$REL_FLYWAY_HOME" >> "$GITHUB_PATH"
 
-          # Verify immediately (absolute path avoids PATH timing issues)
-          "$(pwd)/$REL_FLYWAY_HOME/flyway" -v
+          flyway -v
 
-      - name: Download Cassandra JDBC wrapper (with dependencies) into Flyway drivers/ (no Jackson conflicts)
+      - name: Download Cassandra JDBC wrapper + dependencies (classpath)
         shell: bash
         run: |
-            set -euo pipefail
+          set -euo pipefail
+          mkdir -p lib
 
-            if [ -z "${FLYWAY_HOME:-}" ]; then echo "ERROR: FLYWAY_HOME not set" && exit 1; fi
-            echo "Using FLYWAY_HOME=$FLYWAY_HOME"
+          # Create minimal pom to fetch dependencies
+          cat > pom.xml << 'EOF'
+          <project xmlns="http://maven.apache.org/POM/4.0.0"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>poc</groupId>
+            <artifactId>astra-flyway</artifactId>
+            <version>1.0.0</version>
+            <dependencies>
+              <dependency>
+                <groupId>com.ing.data</groupId>
+                <artifactId>cassandra-jdbc-wrapper</artifactId>
+                <version>4.16.1</version>
+              </dependency>
+            </dependencies>
+          </project>
+          EOF
 
-            mkdir -p lib
-            mkdir -p "$FLYWAY_HOME/drivers"
+          mvn -q -DskipTests dependency:copy-dependencies -DoutputDirectory=lib
 
-            # Pull wrapper + all dependencies
-            cat > pom.xml << 'EOF'
-            <project xmlns="http://maven.apache.org/POM/4.0.0"
-                     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                     xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-              <modelVersion>4.0.0</modelVersion>
-              <groupId>poc</groupId>
-              <artifactId>astra-flyway</artifactId>
-              <version>1.0.0</version>
-              <dependencies>
-                <dependency>
-                  <groupId>com.ing.data</groupId>
-                  <artifactId>cassandra-jdbc-wrapper</artifactId>
-                  <version>4.16.1</version>
-                </dependency>
-              </dependencies>
-            </project>
-            EOF
+          echo "Downloaded jars (first 80):"
+          ls -la lib | head -n 80
 
-            mvn -q -DskipTests dependency:copy-dependencies -DoutputDirectory=lib
-
-            echo "Downloaded jars (first 80):"
-            ls -la lib | head -n 80
-
-            echo "Netty check:"
-            ls -la lib | grep -i "netty-common" || (echo "ERROR: netty-common jar not found in lib/" && exit 1)
-
-            # Show which jackson jars would be excluded (for debugging)
-            echo "Jackson jars found in lib/ (will be excluded from drivers/):"
-            ls -la lib | grep -i jackson || echo "(none)"
-
-            # IMPORTANT:
-            # Flyway bundles Jackson internally. If we add another jackson-* jar, Flyway can break with NoSuchMethodError.
-            # So: copy everything EXCEPT any jar containing 'jackson' in the filename (case-insensitive).
-            echo "Copying jars to Flyway drivers/ excluding any *jackson* jars to prevent version conflicts..."
-            find lib -maxdepth 1 -type f -name "*.jar" \
-              ! -iname "*jackson*.jar" \
-              -print -exec cp -v {} "$FLYWAY_HOME/drivers/" \;
-
-            echo "Flyway drivers/ (first 80):"
-            ls -la "$FLYWAY_HOME/drivers/" | head -n 80
-
-            echo "Sanity check: ensure no jackson jars are present in drivers/"
-            if ls "$FLYWAY_HOME/drivers/" | grep -qi "jackson"; then
-              echo "ERROR: jackson-* jar found in drivers/. Remove it to avoid conflicts."
-              ls -la "$FLYWAY_HOME/drivers/" | grep -i jackson || true
-              exit 1
-            fi
+          echo "Netty check (must include netty-common):"
+          ls -la lib | grep -i "netty-common" || (echo "ERROR: netty-common jar not found in lib/" && exit 1)
 
       # - name: Flyway info (pre-check)
       #   shell: bash
@@ -136,8 +100,10 @@ jobs:
       #   run: |
       #     set -euo pipefail
 
+      #     # Use -classpath so Flyway keeps its own internal libs (Jackson etc.)
       #     flyway \
       #       -configFiles=flyway/conf/flyway.conf \
+      #       -classpath="lib/*" \
       #       -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
       #       -schemas="${ASTRA_DB_KEYSPACE}" \
       #       -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
@@ -153,6 +119,7 @@ jobs:
 
       #     flyway \
       #       -configFiles=flyway/conf/flyway.conf \
+      #       -classpath="lib/*" \
       #       -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
       #       -schemas="${ASTRA_DB_KEYSPACE}" \
       #       -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
