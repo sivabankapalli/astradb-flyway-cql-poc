@@ -19,11 +19,31 @@ jobs:
 
       - name: Create Secure Connect Bundle from base64 secret
         shell: bash
+        env:
+          ASTRA_SCB_BASE64: ${{ secrets.ASTRA_SCB_BASE64 }}
         run: |
           set -euo pipefail
           mkdir -p .astra
-          echo "${{ secrets.ASTRA_SCB_BASE64 }}" | base64 -d > .astra/secure-connect.zip
+          echo "$ASTRA_SCB_BASE64" | base64 -d > .astra/secure-connect.zip
           ls -la .astra
+
+      - name: Verify Astra secrets (safe check)
+        shell: bash
+        env:
+          ASTRA_SCB_BASE64: ${{ secrets.ASTRA_SCB_BASE64 }}
+          ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
+          ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ASTRA_SCB_BASE64" ]; then echo "ERROR: ASTRA_SCB_BASE64 is empty" && exit 1; fi
+          if [ -z "$ASTRA_DB_TOKEN" ]; then echo "ERROR: ASTRA_DB_TOKEN is empty" && exit 1; fi
+          if [ -z "$ASTRA_DB_KEYSPACE" ]; then echo "ERROR: ASTRA_DB_KEYSPACE is empty" && exit 1; fi
+          echo "ASTRA_SCB_BASE64 length: $(echo -n "$ASTRA_SCB_BASE64" | wc -c) bytes"
+          echo "ASTRA_DB_TOKEN length: $(echo -n "$ASTRA_DB_TOKEN" | wc -c) characters"
+          echo "ASTRA_DB_KEYSPACE: $ASTRA_DB_KEYSPACE"
+          echo "$ASTRA_SCB_BASE64" | base64 -d > .astra/secure-connect.zip
+          echo "Secure bundle file info:" && ls -la .astra/secure-connect.zip
+          sha256sum .astra/secure-connect.zip | awk '{print "secure-connect.zip sha256: "$1}'
 
       - name: Download Flyway CLI (robust install + verify)
         shell: bash
@@ -60,6 +80,12 @@ jobs:
                 <groupId>com.ing.data</groupId>
                 <artifactId>cassandra-jdbc-wrapper</artifactId>
                 <version>4.16.1</version>
+              </dependency>
+              <!-- Add netty-common to satisfy io.netty.util.concurrent.FastThreadLocalThread -->
+              <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-common</artifactId>
+                <version>4.1.90.Final</version>
               </dependency>
             </dependencies>
           </project>
