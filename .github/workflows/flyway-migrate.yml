@@ -17,16 +17,6 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Create Secure Connect Bundle from base64 secret
-        shell: bash
-        env:
-          ASTRA_SCB_BASE64: ${{ secrets.ASTRA_SCB_BASE64 }}
-        run: |
-          set -euo pipefail
-          mkdir -p .astra
-          echo "$ASTRA_SCB_BASE64" | base64 -d > .astra/secure-connect.zip
-          ls -la .astra
-
       - name: Verify Astra secrets (safe check)
         shell: bash
         env:
@@ -35,12 +25,22 @@ jobs:
           ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
         run: |
           set -euo pipefail
-          if [ -z "$ASTRA_SCB_BASE64" ]; then echo "ERROR: ASTRA_SCB_BASE64 is empty" && exit 1; fi
-          if [ -z "$ASTRA_DB_TOKEN" ]; then echo "ERROR: ASTRA_DB_TOKEN is empty" && exit 1; fi
-          if [ -z "$ASTRA_DB_KEYSPACE" ]; then echo "ERROR: ASTRA_DB_KEYSPACE is empty" && exit 1; fi
+
+          if [ -z "${ASTRA_SCB_BASE64:-}" ]; then echo "ERROR: ASTRA_SCB_BASE64 is empty" && exit 1; fi
+          if [ -z "${ASTRA_DB_TOKEN:-}" ]; then echo "ERROR: ASTRA_DB_TOKEN is empty" && exit 1; fi
+          if [ -z "${ASTRA_DB_KEYSPACE:-}" ]; then echo "ERROR: ASTRA_DB_KEYSPACE is empty" && exit 1; fi
+
           echo "ASTRA_SCB_BASE64 length: $(echo -n "$ASTRA_SCB_BASE64" | wc -c) bytes"
           echo "ASTRA_DB_TOKEN length: $(echo -n "$ASTRA_DB_TOKEN" | wc -c) characters"
           echo "ASTRA_DB_KEYSPACE: $ASTRA_DB_KEYSPACE"
+
+      - name: Create Secure Connect Bundle from base64 secret
+        shell: bash
+        env:
+          ASTRA_SCB_BASE64: ${{ secrets.ASTRA_SCB_BASE64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p .astra
           echo "$ASTRA_SCB_BASE64" | base64 -d > .astra/secure-connect.zip
           echo "Secure bundle file info:" && ls -la .astra/secure-connect.zip
           sha256sum .astra/secure-connect.zip | awk '{print "secure-connect.zip sha256: "$1}'
@@ -54,19 +54,32 @@ jobs:
           curl -sSL "https://repo1.maven.org/maven2/org/flywaydb/flyway-commandline/${FLYWAY_VER}/flyway-commandline-${FLYWAY_VER}-linux-x64.tar.gz" -o flyway.tgz
           tar -xzf flyway.tgz
 
-          FLYWAY_HOME="$(find . -maxdepth 2 -type f -name flyway -print | head -n 1 | xargs dirname)"
-          echo "Detected FLYWAY_HOME=$FLYWAY_HOME"
+          # Find actual Flyway home (directory containing ./flyway)
+          REL_FLYWAY_HOME="$(find . -maxdepth 2 -type f -name flyway -print | head -n 1 | xargs dirname)"
+          if [ -z "${REL_FLYWAY_HOME:-}" ]; then echo "ERROR: Could not locate Flyway binary after extract" && exit 1; fi
 
-          chmod +x "$FLYWAY_HOME/flyway"
-          echo "$(pwd)/$FLYWAY_HOME" >> "$GITHUB_PATH"
-          "$FLYWAY_HOME/flyway" -v
+          echo "Detected Flyway home: $REL_FLYWAY_HOME"
+          chmod +x "$REL_FLYWAY_HOME/flyway"
 
-      - name: Download Cassandra JDBC wrapper (with dependencies)
+          # Export Flyway home for later steps + add to PATH
+          echo "FLYWAY_HOME=$(pwd)/$REL_FLYWAY_HOME" >> "$GITHUB_ENV"
+          echo "$(pwd)/$REL_FLYWAY_HOME" >> "$GITHUB_PATH"
+
+          # Verify immediately (absolute path avoids PATH timing issues)
+          "$(pwd)/$REL_FLYWAY_HOME/flyway" -v
+
+      - name: Download Cassandra JDBC wrapper (with dependencies) into Flyway drivers/
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p lib
 
+          if [ -z "${FLYWAY_HOME:-}" ]; then echo "ERROR: FLYWAY_HOME not set" && exit 1; fi
+          echo "Using FLYWAY_HOME=$FLYWAY_HOME"
+
+          mkdir -p lib
+          mkdir -p "$FLYWAY_HOME/drivers"
+
+          # Use Maven to pull the wrapper + ALL transitive deps (Netty, DataStax driver, etc.)
           cat > pom.xml << 'EOF'
           <project xmlns="http://maven.apache.org/POM/4.0.0"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -81,23 +94,23 @@ jobs:
                 <artifactId>cassandra-jdbc-wrapper</artifactId>
                 <version>4.16.1</version>
               </dependency>
-              <!-- Add netty-common to satisfy io.netty.util.concurrent.FastThreadLocalThread -->
-              <dependency>
-                <groupId>io.netty</groupId>
-                <artifactId>netty-common</artifactId>
-                <version>4.1.90.Final</version>
-              </dependency>
             </dependencies>
           </project>
           EOF
 
           mvn -q -DskipTests dependency:copy-dependencies -DoutputDirectory=lib
 
-          echo "Downloaded jars (showing first 80):"
+          echo "Downloaded jars (first 80):"
           ls -la lib | head -n 80
 
-          echo "Netty presence check:"
-          ls -la lib | grep -i netty || true
+          echo "Netty check (FastThreadLocalThread is in netty-common):"
+          ls -la lib | grep -i "netty-common" || (echo "ERROR: netty-common jar not found in lib/" && exit 1)
+
+          # Copy ALL jars into Flyway's drivers folder (Flyway reliably loads JDBC drivers from here)
+          cp -v lib/*.jar "$FLYWAY_HOME/drivers/"
+
+          echo "Flyway drivers/ (first 80):"
+          ls -la "$FLYWAY_HOME/drivers/" | head -n 80
 
       - name: Flyway info (pre-check)
         shell: bash
@@ -106,9 +119,9 @@ jobs:
           ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
         run: |
           set -euo pipefail
+
           flyway \
             -configFiles=flyway/conf/flyway.conf \
-            -jarDirs="lib" \
             -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
             -schemas="${ASTRA_DB_KEYSPACE}" \
             -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
@@ -121,9 +134,9 @@ jobs:
           ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
         run: |
           set -euo pipefail
+
           flyway \
             -configFiles=flyway/conf/flyway.conf \
-            -jarDirs="lib" \
             -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
             -schemas="${ASTRA_DB_KEYSPACE}" \
             -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
