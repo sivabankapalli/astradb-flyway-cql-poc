@@ -46,55 +46,59 @@ jobs:
           # Verify immediately using absolute path
           "$(pwd)/$REL_FLYWAY_HOME/flyway" -v
 
-      - name: Download Cassandra JDBC wrapper deps into jdbc/ (exclude jackson to avoid conflicts)
+      - name: Download Cassandra JDBC wrapper deps into jdbc/ (keep Netty, remove Jackson conflicts)
         shell: bash
         run: |
-          set -euo pipefail
-          mkdir -p lib jdbc
+            set -euo pipefail
+            mkdir -p lib jdbc
 
-          cat > pom.xml << 'EOF'
-          <project xmlns="http://maven.apache.org/POM/4.0.0"
-                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-            <modelVersion>4.0.0</modelVersion>
-            <groupId>poc</groupId>
-            <artifactId>astra-flyway</artifactId>
-            <version>1.0.0</version>
-            <dependencies>
-              <dependency>
-                <groupId>com.ing.data</groupId>
-                <artifactId>cassandra-jdbc-wrapper</artifactId>
-                <version>4.16.1</version>
-              </dependency>
-            </dependencies>
-          </project>
-          EOF
+            cat > pom.xml << 'EOF'
+            <project xmlns="http://maven.apache.org/POM/4.0.0"
+                     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                     xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>poc</groupId>
+              <artifactId>astra-flyway</artifactId>
+              <version>1.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>com.ing.data</groupId>
+                  <artifactId>cassandra-jdbc-wrapper</artifactId>
+                  <version>4.16.1</version>
+                </dependency>
+              </dependencies>
+            </project>
+            EOF
 
-          mvn -q -DskipTests dependency:copy-dependencies -DoutputDirectory=lib
+            mvn -q -DskipTests dependency:copy-dependencies -DoutputDirectory=lib
 
-          echo "Downloaded jars (first 80):"
-          ls -la lib | head -n 80
+            echo "Downloaded jars to lib/ (first 80):"
+            ls -la lib | head -n 80
 
-          echo "Netty check (must include netty-common):"
-          ls -la lib | grep -i "netty-common" || (echo "ERROR: netty-common jar not found in lib/" && exit 1)
+            # Copy everything first
+            cp -v lib/*.jar jdbc/ || true
 
-            # Copy ONLY what Flyway needs for Cassandra driver, but exclude Jackson + Flyway-internal style jars
-            find lib -maxdepth 1 -type f -name "*.jar" \
-              ! -name "jackson-*.jar" \
-              ! -name "third-party-jackson-*.jar" \
-              ! -name "slf4j-*.jar" \
-              ! -name "logback-*.jar" \
-              -print -exec cp -v {} jdbc/ \;
+            # Remove jars that conflict with Flyway's internal Jackson
+            rm -f jdbc/jackson-*.jar
+            rm -f jdbc/third-party-jackson-*.jar
 
-            echo "jdbc/ jars (first 80):"
-            ls -la jdbc | head -n 80
+            # Optional: avoid logging clashes
+            rm -f jdbc/slf4j-*.jar
+            rm -f jdbc/logback-*.jar
 
-            echo "Ensure jdbc/ does not include jackson or third-party-jackson:"
+            echo "jdbc/ jars after removals (first 120):"
+            ls -la jdbc | head -n 120
+
+            # Must-have: Netty
+            ls -la jdbc | grep -i "netty-common" || (echo "ERROR: netty-common missing from jdbc/; cannot proceed" && exit 1)
+
+            # Must-not-have: Jackson
             if ls jdbc | grep -Eqi "(^jackson-|^third-party-jackson-)"; then
-              echo "ERROR: jackson jar found in jdbc/. Excluding failed."
+              echo "ERROR: Jackson jars still present in jdbc/. Remove failed."
               ls -la jdbc | grep -Ei "(jackson|third-party-jackson)" || true
               exit 1
             fi
+
 
 
       - name: Flyway info (pre-check)
