@@ -97,20 +97,20 @@ jobs:
             fi
 
 
-      # - name: Flyway info (pre-check)
-      #   shell: bash
-      #   env:
-      #     ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
-      #     ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
-      #   run: |
-      #     set -euo pipefail
-      #     flyway \
-      #       -configFiles=flyway/conf/flyway.conf \
-      #       -jarDirs="jdbc" \
-      #       -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
-      #       -schemas="${ASTRA_DB_KEYSPACE}" \
-      #       -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
-      #       info
+      - name: Flyway info (pre-check)
+        shell: bash
+        env:
+          ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
+          ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
+        run: |
+          set -euo pipefail
+          flyway \
+            -configFiles=flyway/conf/flyway.conf \
+            -jarDirs="jdbc" \
+            -driver="com.ing.data.cassandra.jdbc.CassandraDriver" \
+            -schemas="${ASTRA_DB_KEYSPACE}" \
+            -url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
+            info
 
       # - name: Flyway migrate
       #   shell: bash
