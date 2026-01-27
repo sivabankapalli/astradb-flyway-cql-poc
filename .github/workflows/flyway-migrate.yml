@@ -43,7 +43,7 @@ jobs:
           ls -la .astra/secure-connect.zip
           sha256sum .astra/secure-connect.zip | awk '{print "secure-connect.zip sha256: "$1}'
 
-      - name: Download Flyway CLI
+      - name: Download Flyway CLI (robust install + verify)
         shell: bash
         run: |
           set -euo pipefail
@@ -55,9 +55,12 @@ jobs:
           if [ -z "${REL_FLYWAY_HOME:-}" ]; then echo "ERROR: Could not locate Flyway binary after extract" && exit 1; fi
 
           chmod +x "$REL_FLYWAY_HOME/flyway"
+
+          # Add to PATH for later steps
           echo "$(pwd)/$REL_FLYWAY_HOME" >> "$GITHUB_PATH"
 
-          flyway -v
+          # Verify immediately using absolute path (PATH doesn't update until next step)
+          "$(pwd)/$REL_FLYWAY_HOME/flyway" -v
 
       - name: Download Cassandra JDBC wrapper + dependencies (classpath)
         shell: bash
@@ -65,7 +68,6 @@ jobs:
           set -euo pipefail
           mkdir -p lib
 
-          # Create minimal pom to fetch dependencies
           cat > pom.xml << 'EOF'
           <project xmlns="http://maven.apache.org/POM/4.0.0"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -99,8 +101,6 @@ jobs:
       #     ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
       #   run: |
       #     set -euo pipefail
-
-      #     # Use -classpath so Flyway keeps its own internal libs (Jackson etc.)
       #     flyway \
       #       -configFiles=flyway/conf/flyway.conf \
       #       -classpath="lib/*" \
@@ -116,7 +116,6 @@ jobs:
       #     ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
       #   run: |
       #     set -euo pipefail
-
       #     flyway \
       #       -configFiles=flyway/conf/flyway.conf \
       #       -classpath="lib/*" \
