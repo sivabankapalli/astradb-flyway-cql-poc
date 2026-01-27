@@ -106,19 +106,23 @@ jobs:
             echo "Netty check:"
             ls -la lib | grep -i "netty-common" || (echo "ERROR: netty-common jar not found in lib/" && exit 1)
 
+            # Show which jackson jars would be excluded (for debugging)
+            echo "Jackson jars found in lib/ (will be excluded from drivers/):"
+            ls -la lib | grep -i jackson || echo "(none)"
+
             # IMPORTANT:
             # Flyway bundles Jackson internally. If we add another jackson-* jar, Flyway can break with NoSuchMethodError.
-            # So: copy everything EXCEPT jackson-* into Flyway's drivers folder.
-            echo "Copying jars to Flyway drivers/ excluding jackson-* to prevent version conflicts..."
+            # So: copy everything EXCEPT any jar containing 'jackson' in the filename (case-insensitive).
+            echo "Copying jars to Flyway drivers/ excluding any *jackson* jars to prevent version conflicts..."
             find lib -maxdepth 1 -type f -name "*.jar" \
-              ! -name "jackson-*.jar" \
+              ! -iname "*jackson*.jar" \
               -print -exec cp -v {} "$FLYWAY_HOME/drivers/" \;
 
             echo "Flyway drivers/ (first 80):"
             ls -la "$FLYWAY_HOME/drivers/" | head -n 80
 
             echo "Sanity check: ensure no jackson jars are present in drivers/"
-            if ls "$FLYWAY_HOME/drivers/" | grep -qi "jackson-"; then
+            if ls "$FLYWAY_HOME/drivers/" | grep -qi "jackson"; then
               echo "ERROR: jackson-* jar found in drivers/. Remove it to avoid conflicts."
               ls -la "$FLYWAY_HOME/drivers/" | grep -i jackson || true
               exit 1
