@@ -29,16 +29,17 @@ jobs:
           echo "$ASTRA_SCB_BASE64" | base64 -d > .astra/secure-connect.zip
           ls -la .astra/secure-connect.zip
 
-      # - name: Flyway info (Maven)
-      #   shell: bash
-      #   env:
-      #     ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
-      #     ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
-      #   run: |
-      #     set -euo pipefail
-      #     mvn -q -DskipTests flyway:info \
-      #       -Dflyway.url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
-      #       -Dflyway.schemas="${ASTRA_DB_KEYSPACE}"
+      - name: Flyway info (Maven)
+        continue-on-error: true
+        shell: bash
+        env:
+          ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
+          ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mvn -q -DskipTests flyway:info \
+            -Dflyway.url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
+            -Dflyway.schemas="${ASTRA_DB_KEYSPACE}"
 
       # - name: Flyway migrate (Maven)
       #   shell: bash
