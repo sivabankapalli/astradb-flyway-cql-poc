@@ -62,4 +62,6 @@ jobs:
             -Dflyway.configFiles=flyway/conf/flyway.conf \
             -Dflyway.url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
             -Dflyway.user=token \
-            -Dflyway.password="${ASTRA_DB_TOKEN}"
+            -Dflyway.schemas="${ASTRA_DB_KEYSPACE}" \
+            -Dflyway.baselineOnMigrate=true \
+            -Dflyway.baselineVersion=0
