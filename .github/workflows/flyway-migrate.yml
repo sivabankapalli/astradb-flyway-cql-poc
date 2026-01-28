@@ -1,69 +1,65 @@
-﻿name: Flyway AstraDB Migrate (CLI Fixed)
+﻿name: Flyway - AstraDB CQL Migrations (PoC)
 
 on:
   push:
     branches: [ main ]
+    paths:
+      - "flyway/**"
+      - "pom.xml"
+      - ".github/workflows/flyway-migrate.yml"
   workflow_dispatch:
+
+concurrency:
+  group: astradb-flyway-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   migrate:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Setup Java
-      uses: actions/setup-java@v4
-      with:
-        distribution: temurin
-        java-version: 17
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
 
-    - name: Setup Flyway CLI
-      uses: red-gate/setup-flyway@v1
-      with:
-        version: 10.20.1
+      - name: Recreate Secure Connect Bundle
+        shell: bash
+        env:
+          ASTRA_SCB_BASE64: ${{ secrets.ASTRA_SCB_BASE64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p .astra
+          echo "$ASTRA_SCB_BASE64" | base64 -d > .astra/secure-connect.zip
+          ls -la .astra/secure-connect.zip
 
-    - name: Prepare Secure Connect Bundle
-      id: scb
-      env:
-        ASTRA_SCB_BASE64: ${{ secrets.ASTRA_SCB_BASE64 }}
-      run: |
-        mkdir -p .astra
-        echo "$ASTRA_SCB_BASE64" | base64 -d > .astra/secure-connect.zip
-        echo "scb_path=$(pwd)/.astra/secure-connect.zip" >> $GITHUB_OUTPUT
+      - name: Flyway Info
+        shell: bash
+        env:
+          ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
+          ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mvn -B -e -DskipTests --no-transfer-progress flyway:info \
+            -Dflyway.configFiles=flyway/conf/flyway.conf \
+            -Dflyway.url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
+            -Dflyway.user=token \
+            -Dflyway.password="${ASTRA_DB_TOKEN}"
 
-    - name: Flyway Info
-      run: |
-        flyway info \
-          -driver=com.ing.data.cassandra.jdbc.CassandraDriver \
-          -url="jdbc:cassandra:dbaas://${{ secrets.ASTRA_DB_KEYSPACE }}?secureconnectbundle=${{ steps.scb.outputs.scb_path }}&user=token&password=${{ secrets.ASTRA_DB_TOKEN }}" \
-          -schemas="${{ secrets.ASTRA_DB_KEYSPACE }}" \
-          -locations=filesystem:flyway/sql \
-          -sqlMigrationSuffixes=.cql
-
-    - name: Flyway Validate
-      run: |
-        flyway validate \
-          -driver=com.ing.data.cassandra.jdbc.CassandraDriver \
-          -url="jdbc:cassandra:dbaas://${{ secrets.ASTRA_DB_KEYSPACE }}?secureconnectbundle=${{ steps.scb.outputs.scb_path }}&user=token&password=${{ secrets.ASTRA_DB_TOKEN }}" \
-          -schemas="${{ secrets.ASTRA_DB_KEYSPACE }}" \
-          -locations=filesystem:flyway/sql \
-          -sqlMigrationSuffixes=.cql
-
-    - name: Flyway Migrate
-      run: |
-        flyway migrate \
-          -driver=com.ing.data.cassandra.jdbc.CassandraDriver \
-          -url="jdbc:cassandra:dbaas://${{ secrets.ASTRA_DB_KEYSPACE }}?secureconnectbundle=${{ steps.scb.outputs.scb_path }}&user=token&password=${{ secrets.ASTRA_DB_TOKEN }}" \
-          -schemas="${{ secrets.ASTRA_DB_KEYSPACE }}" \
-          -locations=filesystem:flyway/sql \
-          -sqlMigrationSuffixes=.cql \
-          -baselineOnMigrate=true \
-          -validateOnMigrate=true
-
-    - name: Upload Reports
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: flyway-logs
-        path: flyway-*.log
+      - name: Flyway Migrate
+        shell: bash
+        env:
+          ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
+          ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mvn -B -e -DskipTests --no-transfer-progress flyway:migrate \
+            -Dflyway.configFiles=flyway/conf/flyway.conf \
+            -Dflyway.url="jdbc:cassandra://dbaas/${ASTRA_DB_KEYSPACE}?secureconnectbundle=$(pwd)/.astra/secure-connect.zip&user=token&password=${ASTRA_DB_TOKEN}" \
+            -Dflyway.user=token \
+            -Dflyway.password="${ASTRA_DB_TOKEN}"
