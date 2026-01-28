@@ -1,4 +1,4 @@
-﻿name: Flyway AstraDB Migrate (CLI)
+﻿name: Flyway AstraDB Migrate (CLI Fixed)
 
 on:
   push:
@@ -12,7 +12,7 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Setup Java (for Flyway Java CLI)
+    - name: Setup Java
       uses: actions/setup-java@v4
       with:
         distribution: temurin
@@ -21,43 +21,49 @@ jobs:
     - name: Setup Flyway CLI
       uses: red-gate/setup-flyway@v1
       with:
-        version: 10.20.1  # Latest stable with Cassandra support
+        version: 10.20.1
 
     - name: Prepare Secure Connect Bundle
+      id: scb
       env:
         ASTRA_SCB_BASE64: ${{ secrets.ASTRA_SCB_BASE64 }}
       run: |
         mkdir -p .astra
         echo "$ASTRA_SCB_BASE64" | base64 -d > .astra/secure-connect.zip
+        echo "scb_path=$(pwd)/.astra/secure-connect.zip" >> $GITHUB_OUTPUT
 
     - name: Flyway Info
-      env:
-        FLYWAY_URL: jdbc:cassandra:dbaas://${{ secrets.ASTRA_DB_KEYSPACE }}?secureconnectbundle=.astra/secure-connect.zip&user=token&password=${{ secrets.ASTRA_DB_TOKEN }}
-        FLYWAY_SCHEMAS: ${{ secrets.ASTRA_DB_KEYSPACE }}
-      run: flyway info -configFiles=flyway.conf
+      run: |
+        flyway info \
+          -driver=com.ing.data.cassandra.jdbc.CassandraDriver \
+          -url="jdbc:cassandra:dbaas://${{ secrets.ASTRA_DB_KEYSPACE }}?secureconnectbundle=${{ steps.scb.outputs.scb_path }}&user=token&password=${{ secrets.ASTRA_DB_TOKEN }}" \
+          -schemas="${{ secrets.ASTRA_DB_KEYSPACE }}" \
+          -locations=filesystem:flyway/sql \
+          -sqlMigrationSuffixes=.cql
 
     - name: Flyway Validate
-      env:
-        FLYWAY_URL: jdbc:cassandra:dbaas://${{ secrets.ASTRA_DB_KEYSPACE }}?secureconnectbundle=.astra/secure-connect.zip&user=token&password=${{ secrets.ASTRA_DB_TOKEN }}
-        FLYWAY_SCHEMAS: ${{ secrets.ASTRA_DB_KEYSPACE }}
-      run: flyway validate -configFiles=flyway.conf
+      run: |
+        flyway validate \
+          -driver=com.ing.data.cassandra.jdbc.CassandraDriver \
+          -url="jdbc:cassandra:dbaas://${{ secrets.ASTRA_DB_KEYSPACE }}?secureconnectbundle=${{ steps.scb.outputs.scb_path }}&user=token&password=${{ secrets.ASTRA_DB_TOKEN }}" \
+          -schemas="${{ secrets.ASTRA_DB_KEYSPACE }}" \
+          -locations=filesystem:flyway/sql \
+          -sqlMigrationSuffixes=.cql
 
     - name: Flyway Migrate
-      env:
-        FLYWAY_URL: jdbc:cassandra:dbaas://${{ secrets.ASTRA_DB_KEYSPACE }}?secureconnectbundle=.astra/secure-connect.zip&user=token&password=${{ secrets.ASTRA_DB_TOKEN }}
-        FLYWAY_SCHEMAS: ${{ secrets.ASTRA_DB_KEYSPACE }}
-      run: flyway migrate -configFiles=flyway.conf
-
-    - name: Flyway Info (Post-Migrate)
-      if: always()
-      env:
-        FLYWAY_URL: jdbc:cassandra:dbaas://${{ secrets.ASTRA_DB_KEYSPACE }}?secureconnectbundle=.astra/secure-connect.zip&user=token&password=${{ secrets.ASTRA_DB_TOKEN }}
-        FLYWAY_SCHEMAS: ${{ secrets.ASTRA_DB_KEYSPACE }}
-      run: flyway info -configFiles=flyway.conf
+      run: |
+        flyway migrate \
+          -driver=com.ing.data.cassandra.jdbc.CassandraDriver \
+          -url="jdbc:cassandra:dbaas://${{ secrets.ASTRA_DB_KEYSPACE }}?secureconnectbundle=${{ steps.scb.outputs.scb_path }}&user=token&password=${{ secrets.ASTRA_DB_TOKEN }}" \
+          -schemas="${{ secrets.ASTRA_DB_KEYSPACE }}" \
+          -locations=filesystem:flyway/sql \
+          -sqlMigrationSuffixes=.cql \
+          -baselineOnMigrate=true \
+          -validateOnMigrate=true
 
     - name: Upload Reports
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: flyway-reports
-        path: flyway-report.*
+        name: flyway-logs
+        path: flyway-*.log
