@@ -35,7 +35,7 @@
           </schemas>
 
           <validateOnMigrate>true</validateOnMigrate>
-          <baselineOnMigrate>true</baselineOnMigrate>
+          <baselineOnMigrate>false</baselineOnMigrate>
           <cleanDisabled>true</cleanDisabled>
 
           <!-- Use ING driver -->
