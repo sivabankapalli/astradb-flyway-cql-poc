@@ -1,1 +1,1 @@
-ALTER TABLE customer ADD phone text;
+ALTER TABLE customer2 ADD phone text;
